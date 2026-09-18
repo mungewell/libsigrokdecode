@@ -69,6 +69,7 @@ class Decoder(srd.Decoder):
         self.cache = 0
 
         self.state = "NOSYNC"
+        self.forward = True
         self.sync = 0
         self.data = 0
         self.payload_cnt = 0
@@ -102,7 +103,7 @@ class Decoder(srd.Decoder):
             self.sync = ((self.sync & 0xFFFF) >> 1) | (bit << 15)
             self.payload_cnt += 1
 
-            if self.sync == 0xBFFC:
+            if self.sync == 0xBFFC or self.sync == 0x3FFD:
                 if self.state == "NOSYNC" or self.payload_cnt > 16:
                     self.put(
                         self.ss_first,
@@ -121,13 +122,24 @@ class Decoder(srd.Decoder):
                             (self.time[1] * 10) + self.time[0],
                         )
                     )
-                    self.put(
-                        self.ss_first,
-                        es,
-                        self.out_ann,
-                        [2, [": %s" % frame, "Sync", "Sy", "S"]],
-                    )
                     self.put(self.es_last, es, self.out_ann, [10, ["%s" % frame]])
+
+                    if self.sync == 0xBFFC:
+                        self.forward = True
+                        self.put(
+                            self.ss_first,
+                            es,
+                            self.out_ann,
+                            [2, [": %s" % frame, "Sync", "Sy", "S"]],
+                        )
+                    else:
+                        self.forward = False
+                        self.put(
+                            self.ss_first,
+                            es,
+                            self.out_ann,
+                            [2, [": %s" % frame, "Cnys", "Cn", "C"]],
+                        )
 
                 self.es_last = es
                 self.state = "PAYLOAD"
@@ -138,21 +150,26 @@ class Decoder(srd.Decoder):
             # save ss boundaries for labels
             self.ss_data[self.payload_cnt % 16] = ss
 
-            self.data = ((self.data & 0xFFFF) >> 1) | (bit << 15)
+            if self.forward:
+                self.data = ((self.data & 0xFFFF) >> 1) | (bit << 15)
+            else:
+                self.data = ((self.data & 0x7FFF) << 1) | bit
 
             if self.payload_cnt % 16 == 15:
                 word = (self.payload_cnt - 1) >> 4
+                if not self.forward:
+                    word = word ^ 0x03
 
                 self.time[word * 2] = self.data & 0xF
                 self.put(
-                    self.ss_data[0],
-                    self.ss_data[4],
+                    self.ss_data[0] if self.forward else self.ss_data[12],
+                    self.ss_data[4] if self.forward else es,
                     self.out_ann,
                     [3, [": %X" % (self.data & 0xF)]],
                 )
                 self.put(
-                    self.ss_data[4],
-                    self.ss_data[8],
+                    self.ss_data[4] if self.forward else self.ss_data[8],
+                    self.ss_data[8] if self.forward else self.ss_data[12],
                     self.out_ann,
                     [4, [": %X" % ((self.data >> 4) & 0xF)]],
                 )
@@ -160,44 +177,44 @@ class Decoder(srd.Decoder):
                 if word == 1 or word == 2:
                     self.time[(word * 2) + 1] = (self.data >> 8) & 0x7
                     self.put(
-                        self.ss_data[8],
-                        self.ss_data[11],
+                        self.ss_data[8] if self.forward else self.ss_data[5],
+                        self.ss_data[11] if self.forward else self.ss_data[8],
                         self.out_ann,
                         [5, [": %X" % ((self.data >> 8) & 0x7)]],
                     )
                 else:
                     self.time[(word * 2) + 1] = (self.data >> 8) & 0x3
                     self.put(
-                        self.ss_data[8],
-                        self.ss_data[10],
+                        self.ss_data[8] if self.forward else self.ss_data[6],
+                        self.ss_data[10] if self.forward else self.ss_data[8],
                         self.out_ann,
                         [5, [": %X" % ((self.data >> 8) & 0x3)]],
                     )
                     if word == 0:
                         self.drop = (self.data >> 10) & 0x1
                         self.put(
-                            self.ss_data[10],
-                            self.ss_data[11],
+                            self.ss_data[10] if self.forward else self.ss_data[5],
+                            self.ss_data[11] if self.forward else self.ss_data[6],
                             self.out_ann,
                             [6, [": %X" % ((self.data >> 10) & 0x1)]],
                         )
                     else:
                         self.put(
-                            self.ss_data[10],
-                            self.ss_data[11],
+                            self.ss_data[10] if self.forward else self.ss_data[5],
+                            self.ss_data[11] if self.forward else self.ss_data[6],
                             self.out_ann,
                             [7, [": %X" % ((self.data >> 10) & 0x1)]],
                         )
 
                 self.put(
-                    self.ss_data[11],
-                    self.ss_data[12],
+                    self.ss_data[11] if self.forward else self.ss_data[4],
+                    self.ss_data[12] if self.forward else self.ss_data[5],
                     self.out_ann,
                     [8, [": %X" % ((self.data >> 11) & 0x1)]],
                 )
                 self.put(
-                    self.ss_data[12],
-                    es,
+                    self.ss_data[12] if self.forward else self.ss_data[0],
+                    es if self.forward else self.ss_data[4],
                     self.out_ann,
                     [9, [": %X" % ((self.data >> 12) & 0xF)]],
                 )
