@@ -74,7 +74,7 @@ class Decoder(srd.Decoder):
         self.data = 0
         self.payload_cnt = 0
         self.ss_first = 0
-        self.es_last = 0
+        self.ss_frame = 0
         self.ss_data = [0] * 16
 
         self.time = [0] * 8
@@ -96,8 +96,8 @@ class Decoder(srd.Decoder):
         if self.state == "SYNC" or self.state == "NOSYNC":
             if self.ss_first == 0:
                 self.ss_first = ss
-            if self.es_last == 0:
-                self.es_last = ss
+            if self.ss_frame == 0:
+                self.ss_frame = ss
 
             # sync 'footer' is 16bit, shift register downwards
             self.sync = ((self.sync & 0xFFFF) >> 1) | (bit << 15)
@@ -122,7 +122,6 @@ class Decoder(srd.Decoder):
                             (self.time[1] * 10) + self.time[0],
                         )
                     )
-                    self.put(self.es_last, es, self.out_ann, [10, ["%s" % frame]])
 
                     if self.sync == 0xBFFC:
                         self.forward = True
@@ -130,18 +129,31 @@ class Decoder(srd.Decoder):
                             self.ss_first,
                             es,
                             self.out_ann,
-                            [2, [": %s" % frame, "Sync", "Sy", "S"]],
+                            [2, [": %s" % "Sync", "Sy", "S"]],
                         )
+                        self.put(
+                            self.ss_frame,
+                            es,
+                            self.out_ann,
+                            [10, ["%s" % frame]],
+                        )
+                        self.ss_frame = es
                     else:
                         self.forward = False
                         self.put(
                             self.ss_first,
                             es,
                             self.out_ann,
-                            [2, [": %s" % frame, "Cnys", "Cn", "C"]],
+                            [2, [": %s" % "Cnys", "Cn", "C"]],
                         )
+                        self.put(
+                            self.ss_frame,
+                            self.ss_first,
+                            self.out_ann,
+                            [10, ["%s" % frame]],
+                        )
+                        self.ss_frame = self.ss_first
 
-                self.es_last = es
                 self.state = "PAYLOAD"
                 self.payload_cnt = 0
                 return
