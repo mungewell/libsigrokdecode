@@ -103,6 +103,9 @@ class Decoder(srd.Decoder):
             self.sync = ((self.sync & 0xFFFF) >> 1) | (bit << 15)
             self.payload_cnt += 1
 
+            if self.state == "NOSYNC":
+                self.ss_frame = es
+
             if self.sync == 0xBFFC or self.sync == 0x3FFD:
                 if self.state == "NOSYNC" or self.payload_cnt > 16:
                     self.put(
