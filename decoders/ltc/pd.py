@@ -35,7 +35,11 @@ class Decoder(srd.Decoder):
     outputs = []
     tags = ["Audio"]
     channels = ({"id": "data", "name": "Data", "desc": "Data line"},)
-    options = ({"id": "fps", "desc": "Video Framerate", "default": 25.0},)
+    options = (
+        {"id": "fps", "desc": "Video Framerate", "default": 25.0},
+        {'id': "hfr", "desc": "High Framerate mode", "default": "Off",
+            "values": ("Off", "Wide_LTC", "Frame_Pair")},
+    )
     annotations = (
         ("bit", "Bit"),
         ("nosync", "NoSync"),
@@ -59,6 +63,7 @@ class Decoder(srd.Decoder):
         self.reset()
 
     def reset(self):
+        self.fps = None
         self.samplerate = None
         self.bit_width = 0
         self.bit25pc = 0
@@ -79,11 +84,14 @@ class Decoder(srd.Decoder):
 
         self.time = [0] * 8
         self.drop = 0
+        self.polarity = 0
+        self.bgf1_flag = 0
 
     def metadata(self, key, value):
         if key == srd.SRD_CONF_SAMPLERATE:
             self.samplerate = value
-        self.bit_width = self.samplerate / (80 * self.options["fps"])
+        self.fps = self.options["fps"]
+        self.bit_width = self.samplerate / (80 * self.fps)
         self.bit25pc = self.bit_width / 4
         self.bit75pc = self.bit_width / 2 + self.bit_width / 4
 
@@ -115,6 +123,13 @@ class Decoder(srd.Decoder):
                         [1, ["NoSync", "None", "No", "N"]],
                     )
                 else:
+                    ff = (self.time[1] * 10) + self.time[0]
+                    if self.options["hfr"] == "Wide_LTC":
+                        if self.bgf1_flag:
+                            ff += 40
+                    elif self.options["hfr"] == "Frame_Pair":
+                        ff = (ff * 2) + self.polarity
+
                     frame = format(
                         "%2.2d:%2.2d:%2.2d%s%2.2d"
                         % (
@@ -122,7 +137,7 @@ class Decoder(srd.Decoder):
                             (self.time[5] * 10) + self.time[4],
                             (self.time[3] * 10) + self.time[2],
                             ":" if self.drop == 0 else ";",
-                            (self.time[1] * 10) + self.time[0],
+                            ff,
                         )
                     )
 
@@ -220,6 +235,15 @@ class Decoder(srd.Decoder):
                             self.out_ann,
                             [7, [": %X" % ((self.data >> 10) & 0x1)]],
                         )
+
+                # these flags are repurposed for HighFramerate modes
+                if self.fps == 25 or self.fps == 50:
+                    if word == 3:
+                        self.polarity = (self.data >> 11) & 0x1
+                elif word == 1:
+                    self.polarity = (self.data >> 11) & 0x1
+                if word == 3:
+                    self.bgf1_flag = (self.data >> 10) & 0x1
 
                 self.put(
                     self.ss_data[11] if self.forward else self.ss_data[4],
